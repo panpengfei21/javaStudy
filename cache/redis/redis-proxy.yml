@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-proxy
+spec:
+  type: NodePort # 对K8S外部提供服务
+  ports:
+    - port: 7777
+      targetPort: 7777
+      nodePort: 30001   # 对外提供的端口
+      protocol: TCP
+  selector:
+    app: redis-cluster-proxy
+
+---
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-cluster-proxy-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-cluster-proxy
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              proxy: redis-proxy-client
+          namespaceSelector: {}
+      ports:
+        - port: 7777
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-proxy-conf
+data:
+  proxy.conf: |+
+    cluster redis-cluster.default.svc.cluster.local:7001 
+    # auth 'your_long_enough_password'
+    bind 0.0.0.0
+    enable-cross-slot yes
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cluster-proxy
+  labels:
+    app: redis-cluster-proxy
+spec:
+  replicas: 1
+  minReadySeconds: 30
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app: redis-cluster-proxy
+  template:
+    metadata:
+      labels:
+        app: redis-cluster-proxy
+        run: redis-client
+    spec:
+      imagePullSecrets:
+        - name: aliyun-docker-registry
+      initContainers:
+        - name: tcp-backlog
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "echo 511 > /proc/sys/net/core/somaxconn"]
+          securityContext:
+            privileged: true
+      volumes:
+        - name: conf
+          configMap:
+            name: redis-proxy-conf
+      containers:
+        - name: redis-cluster-proxy
+          # image: registry.cn-shenzhen.aliyuncs.com/leeguangxing/redis-cluster-proxy:6.0.6
+          image: 125.124.209.126:6001/library/redis-cluster-proxy:v1.0.0 
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7777
+              protocol: TCP
+          volumeMounts:
+            - name: conf
+              mountPath: /data
+          command: ["redis-cluster-proxy"]
+          args:
+            - -c
+            - /data/proxy.conf
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1Gi

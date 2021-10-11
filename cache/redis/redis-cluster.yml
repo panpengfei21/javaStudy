@@ -1,0 +1,77 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: redis-cluster
+  name: redis-cluster
+  namespace: default
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  serviceName: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+    spec:
+      containers:
+        - command: 
+            ["/bin/bash", "/usr/local/etc/redis/update-node.sh", "redis-server", "/usr/local/etc/redis/redis.conf"]
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: TZ
+              value: Asia/Shanghai
+          image: 'redis:6.2.4'
+          imagePullPolicy: IfNotPresent
+          name: redis
+          ports:
+            - containerPort: 7001
+              name: redis-port
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /data
+              name: redis-cluster-data
+              subPath: data
+              readOnly: false
+            - mountPath: /usr/local/etc/redis
+              name: redis-config
+              readOnly: false
+      dnsPolicy: ClusterFirst
+      volumes:
+        - name: redis-config
+          configMap:
+           name: redis-config
+  volumeClaimTemplates:  #PVC模板
+  - metadata:
+      name: redis-cluster-data
+      namespace: default
+    spec:
+      accessModes: [ "ReadWriteMany" ]
+      resources:
+        requests:
+          storage: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: redis-cluster
+  name: redis-cluster
+  namespace: default
+spec:
+  ports:
+    - name: redis-port
+      port: 7001
+      protocol: TCP
+      targetPort: 7001
+  selector:
+    app: redis-cluster
+  type: ClusterIP
+  clusterIP: None
